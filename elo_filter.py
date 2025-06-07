@@ -84,45 +84,54 @@ class PGNRatingFilter:
         """Internal method to stream process the file."""
         current_game_lines = []
         current_headers = {}
-        in_game = False
+        in_headers = False
+        in_moves = False
         
         for line_num, line in enumerate(file_handle, 1):
+            original_line = line
             line = line.strip()
             
             # Header line
             if line.startswith('[') and line.endswith(']'):
-                if not in_game:
+                if not in_headers and not in_moves:
                     # Start of new game
-                    in_game = True
+                    in_headers = True
                     current_game_lines = []
                     current_headers = {}
                 
-                # Parse header
+                # Parse header for rating check
                 header_info = self.parse_header(line)
                 if header_info:
                     key, value = header_info
                     current_headers[key] = value
                 
-                current_game_lines.append(line)
+                current_game_lines.append(original_line.rstrip())
             
-            elif line and in_game:
-                # Move lines
-                current_game_lines.append(line)
+            elif not line and in_headers:
+                # Empty line after headers - start of moves section
+                in_headers = False
+                in_moves = True
+                current_game_lines.append('')  # Keep empty line
             
-            elif not line and in_game:
-                # Empty line - end of game
+            elif line and in_moves:
+                # Move lines - keep original formatting
+                current_game_lines.append(original_line.rstrip())
+            
+            elif not line and in_moves:
+                # Empty line after moves - end of game
                 self.games_processed += 1
                 
                 # Check if game meets rating criteria
                 if self.should_include_game(current_headers):
                     self.games_matched += 1
-                    # Write game to output
+                    # Write complete game to output
                     for game_line in current_game_lines:
                         self.output_handle.write(game_line + '\n')
                     self.output_handle.write('\n')  # Empty line after game
                 
                 # Reset for next game
-                in_game = False
+                in_headers = False
+                in_moves = False
                 current_game_lines = []
                 current_headers = {}
                 
@@ -130,9 +139,14 @@ class PGNRatingFilter:
                 if self.games_processed % 1000 == 0:
                     print(f"Processed {self.games_processed} games, found {self.games_matched} matches", 
                           file=sys.stderr)
+            
+            elif line and not in_headers and not in_moves:
+                # Stray content - could be start of moves without empty line separator
+                in_moves = True
+                current_game_lines.append(original_line.rstrip())
         
         # Handle last game if file doesn't end with empty line
-        if in_game and current_game_lines:
+        if (in_headers or in_moves) and current_game_lines:
             self.games_processed += 1
             if self.should_include_game(current_headers):
                 self.games_matched += 1
